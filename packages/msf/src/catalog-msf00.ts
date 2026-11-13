@@ -9,6 +9,7 @@ import { MSF_VERSION } from './types.js';
 import type {
     Catalog, CatalogDelta, CatalogObject, CatalogTrack, Packaging,
     MsfMediaTemplate, MsfInitDataEntry, CmsfContentProtection, CmsfDrmSystem, CmsfUrlRef,
+    MsfParseOptions,
 } from './types.js';
 import { assertFiniteCatalogNumbers } from './catalog-validate.js';
 
@@ -66,6 +67,7 @@ const VALID_PACKAGING = new Set<string>(['loc', 'mediatimeline', 'eventtimeline'
 export function parseMsfCatalog(
     json: string | Uint8Array,
     catalogNamespace?: string,
+    options?: MsfParseOptions,
 ): Catalog {
     const text = typeof json === 'string' ? json : new TextDecoder().decode(json);
     const raw: unknown = JSON.parse(text);
@@ -100,9 +102,10 @@ export function parseMsfCatalog(
     // spelling the corpus oracle accepts.
     const legacyMsf00 = typeof obj['version'] === 'number';
 
-    const tracks = (obj['tracks'] as unknown[]).map(
-        (raw, i) => parseTrack(raw, i, catalogNamespace, legacyMsf00),
-    );
+    const tracks = (obj['tracks'] as unknown[])
+        .map((raw, i) => [raw, i] as const)
+        .filter(([raw]) => !skippedPackaging(raw, options))
+        .map(([raw, i]) => parseTrack(raw, i, catalogNamespace, legacyMsf00, options));
 
     // §5.1.11: Track names must be unique per namespace
     validateTrackUniqueness(tracks);
@@ -283,6 +286,22 @@ export function validateLocmafVersion(track: {
     }
 }
 
+/** fec-with-moq: a track whose packaging the caller asked to accept and leave out. */
+function skippedPackaging(raw: unknown, options: MsfParseOptions | undefined): boolean {
+    if (!options?.skipPackaging || typeof raw !== 'object' || raw === null) return false;
+    const packaging = (raw as Record<string, unknown>)['packaging'];
+    return typeof packaging === 'string' && options.skipPackaging.has(packaging);
+}
+
+/** fec-with-moq: the unknown fields the caller asked to keep, as `extra`. */
+function keptFields(obj: Record<string, unknown>, options: MsfParseOptions | undefined): Partial<CatalogTrack> {
+    const extra: Record<string, unknown> = {};
+    for (const key of options?.keepFields ?? []) {
+        if (obj[key] !== undefined) extra[key] = obj[key];
+    }
+    return Object.keys(extra).length ? { extra } : {};
+}
+
 /**
  * Parse and validate a single track object.
  * Strips unknown fields per §5.1.
@@ -292,6 +311,7 @@ function parseTrack(
     index: number,
     catalogNamespace: string | undefined,
     legacyMsf00: boolean,
+    options?: MsfParseOptions,
 ): CatalogTrack {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
         throw new Error(`Track at index ${index} must be a JSON object`);
@@ -415,6 +435,7 @@ function parseTrack(
         isLive,
         ...(namespace !== undefined ? { namespace } : {}),
         ...extractRecognizedOptionalFields(obj, name),
+        ...keptFields(obj, options),
     };
 
     return track;

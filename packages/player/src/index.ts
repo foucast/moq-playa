@@ -14,6 +14,8 @@
 // ─── Player ──────────────────────────────────────────────────────────
 
 export { MoqtPlayer } from './player.js';
+export { FecStage, parseFecInfo } from './fec-stage.js';
+export type { FecConfig, FecDecoder, FecInfo, FecLayout, FecStats, FecBlockRecord } from './fec-stage.js';
 export type { SubscribeIntent, QualitySwitchIntent } from './player.js';
 
 // ─── Capability Detection ─────────────────────────────────────────────

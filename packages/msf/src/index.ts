@@ -17,6 +17,7 @@ export type {
     Packaging,
     TrackRole,
     CatalogTrack,
+    MsfParseOptions,
     Catalog,
     RemoveTrackRef,
     CatalogDelta,

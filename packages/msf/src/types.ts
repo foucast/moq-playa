@@ -189,6 +189,22 @@ export interface CatalogTrack {
     readonly template?: MsfMediaTemplate;
     /** @see draft-ietf-moq-cmsf-01 §4.1.2 — content-protection refIDs applying to this track */
     readonly contentProtectionRefIDs?: readonly string[];
+    /**
+     * fec-with-moq: catalog fields kept because {@link MsfParseOptions.keepFields} named them
+     * (unknown fields are otherwise dropped, §5.1). Absent unless asked for.
+     */
+    readonly extra?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * fec-with-moq: opt-in parse extensions, off by default. With neither field set the parser behaves
+ * exactly as without options.
+ */
+export interface MsfParseOptions {
+    /** Packaging values to accept and leave out of the catalog's tracks (e.g. `x-fec-repair`). */
+    readonly skipPackaging?: ReadonlySet<string>;
+    /** Unknown track fields to keep in {@link CatalogTrack.extra} (e.g. `x-fec`). */
+    readonly keepFields?: readonly string[];
 }
 
 /**

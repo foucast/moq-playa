@@ -1,7 +1,24 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+
+/**
+ * The fec-with-moq decoder sources: FEC_DECODER_SRC if set, otherwise the sibling checkout, under the
+ * repository's name (fec-with-moq) or its old one (fecing-with-moq), whichever has web/fec-decoder/src.
+ * The fec-with-moq page imports it, so the build stops here, with a message, when there is none.
+ */
+function fecDecoderSrc(): string {
+  const env = process.env.FEC_DECODER_SRC;
+  if (env !== undefined) return env;
+  const tried = ['fec-with-moq', 'fecing-with-moq'].map((d) => resolve(__dirname, '../..', d, 'web/fec-decoder/src'));
+  const found = tried.find((p) => existsSync(p));
+  if (found === undefined) {
+    throw new Error(`fec-decoder: no fec-with-moq checkout found (tried ${tried.join(', ')}). `
+      + 'Clone foucast/fec-with-moq beside this repository, or set FEC_DECODER_SRC to its web/fec-decoder/src.');
+  }
+  return found;
+}
 
 /** Build identity for diagnostics: a run's logs must name the build that produced them. */
 function buildId(): string {
@@ -46,6 +63,10 @@ export default defineConfig({
       '@openmoq/player': resolve(__dirname, '../packages/player/src/index.ts'),
       '@openmoq/browser': resolve(__dirname, '../packages/browser/src/index.ts'),
       '@openmoq/playa': resolve(__dirname, '../packages/playa/src/index.ts'),
+      // fec-with-moq harness: the FEC decoder, consumed from a checkout of the fec-with-moq
+      // repository (web/fec-decoder/src), not copied here. FEC_DECODER_SRC overrides the default
+      // sibling checkout (see fecDecoderSrc).
+      'fec-decoder': fecDecoderSrc(),
     },
   },
   build: {
@@ -58,6 +79,8 @@ export default defineConfig({
         player: resolve(__dirname, 'player/index.html'),
         simple: resolve(__dirname, 'simple/index.html'),
         broadcast: resolve(__dirname, 'broadcast/index.html'),
+        'fec-with-moq': resolve(__dirname, 'fec-with-moq/index.html'),
+        'fec-with-moq-demo': resolve(__dirname, 'fec-with-moq/demo.html'),
       },
     },
   },
