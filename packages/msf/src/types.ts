@@ -242,6 +242,21 @@ export interface CatalogTrack {
 }
 
 /**
+ * fec-with-moq: opt-in parse extensions, off by default. Without them the parser behaves exactly
+ * as upstream.
+ */
+export interface MsfParseOptions {
+    /**
+     * Packaging values to accept and leave out of the catalog's tracks (e.g. `x-fec-repair`).
+     * The parser would keep them, but drops their `packagingMetadata` (defined only for loc,
+     * MSF-02 §5.2.5); `onSkipped` hands the caller the raw track instead.
+     */
+    readonly skipPackaging?: ReadonlySet<string>;
+    /** Called with each track left out by `skipPackaging`, as the raw JSON object. */
+    readonly onSkipped?: (track: Readonly<Record<string, unknown>>) => void;
+}
+
+/**
  * Independent (non-delta) catalog.
  * @see draft-ietf-moq-msf-00 §5.1
  */

@@ -19,7 +19,7 @@
  * @module
  */
 
-import type { CatalogState } from '@openmoq/msf';
+import type { CatalogState, MsfParseOptions } from '@openmoq/msf';
 import type { CatalogNamespaceContext } from '@openmoq/msf';
 import {
     parseMsfCatalog,
@@ -71,6 +71,9 @@ export class CatalogManager {
 
     /** Last applied location (location-aware path only). */
     private _lastApplied: { group: bigint; object: bigint } | null = null;
+
+    /** fec-with-moq: opt-in MSF parse extensions (config.fec); unset parses as upstream. */
+    msfParseOptions: MsfParseOptions | undefined;
 
     constructor(catalogNamespace: CatalogNamespaceContext) {
         this.catalogNamespace = catalogNamespace;
@@ -290,7 +293,7 @@ export class CatalogManager {
                 this._wireFormat = 'catalogformat-01';
             } else {
                 // MSF-00
-                const catalog = parseMsfCatalog(payload, this.catalogNamespace);
+                const catalog = parseMsfCatalog(payload, this.catalogNamespace, this.msfParseOptions);
                 // Explicit reset — clear cf01 state to prevent stale patch context
                 this.cf01DeltaSupport = false;
                 this.lastRawDocument = null;

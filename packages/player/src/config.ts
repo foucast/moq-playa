@@ -737,6 +737,15 @@ export interface TransformConfig {
    * Return null to suppress.
    */
   readonly errorFilter?: (error: PlayerError) => PlayerError | null;
+
+  /**
+   * fec-with-moq: forward error correction for a plain LOC video track that the catalog's
+   * `x-fec-source` track names (see fec-stage.ts, fecInfoFromCatalog). Default: undefined (off):
+   * the plain track plays on the stock path, and the catalog parses as upstream. On, the parser
+   * leaves the `x-fec-source` and `x-fec-repair` tracks out of the catalog's tracks and hands them
+   * to the FEC stage raw (upstream drops their packagingMetadata).
+   */
+  readonly fec?: import('./fec-stage.js').FecConfig;
 }
 
 /** Debug and tracing options. */

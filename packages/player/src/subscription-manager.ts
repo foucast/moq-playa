@@ -325,6 +325,18 @@ export class SubscriptionManager {
       ) => void)
     | null = null;
 
+  /**
+   * fec-with-moq (config.fec): source tracks, by name, whose Objects go to a FEC stage instead of
+   * the LOC path. The stage hands rebuilt frames back through routeObject(..., fromFec = true).
+   */
+  readonly fecSources = new Map<string, (obj: MoqtObject) => void>();
+
+  /**
+   * fec-with-moq: repair-rung subscriptions, by alias. They are not media tracks: their Objects
+   * go only to the FEC stage, never to a pipeline, the stats or the bandwidth estimator.
+   */
+  readonly fecRepair = new Map<bigint, (obj: MoqtObject) => void>();
+
   /** Number of active track registrations. */
   get activeCount(): number {
     return this.tracks.size;
@@ -448,10 +460,20 @@ export class SubscriptionManager {
    * @see draft-ietf-moq-cmsf-00 §3.3 (CMAF Object Packaging)
    * @see draft-ietf-moq-msf-00 §8 (Event Timeline track)
    */
-  async routeObject(streamId: bigint, obj: MoqtObject, sourceDraft?: DraftVersion, sourceConnection?: unknown, receiptInput?: MoqtObject | ObjectDatagram, delivery?: ObjectDeliveryOptions): Promise<void> {
+  async routeObject(streamId: bigint, obj: MoqtObject, sourceDraft?: DraftVersion, sourceConnection?: unknown, receiptInput?: MoqtObject | ObjectDatagram, delivery?: ObjectDeliveryOptions, fromFec = false): Promise<void> {
     const alias = BigInt(obj.trackAlias);
+    const repair = this.fecRepair.get(alias);
+    if (repair) {
+      repair(obj);
+      return;
+    }
     const info = this.tracks.get(alias);
     if (!info) return; // Unknown track alias — silently ignore
+    const fec = fromFec || info.packaging !== 'loc' ? undefined : this.fecSources.get(info.trackName);
+    if (fec) {
+      fec(obj);
+      return;
+    }
     // Receipt ownership is separate from the alias registration. An asynchronous
     // transform may finish after pause/recovery while the subscription survives.
     const inputOwner = this.mediaInputOwner;

@@ -14,6 +14,8 @@
 // ─── Player ──────────────────────────────────────────────────────────
 
 export { MoqtPlayer } from './player.js';
+export { FecStage, parseFecInfo } from './fec-stage.js';
+export type { FecConfig, FecDecoder, FecInfo, FecLayout, FecStats, FecBlockRecord } from './fec-stage.js';
 export type { SubscribeIntent, QualitySwitchIntent } from './player.js';
 export type { MediaSelectionSnapshot, AudioSelectionOptions, AudioTimelineReference,
   MediaSelectionOptions, MediaTimelineAnchor, MediaTimelineReference } from './player-selection-state.js';

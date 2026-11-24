@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Playa FEC demo</title>
+  <style>
+    body { margin: 0; background: #000; }
+    #box { position: relative; width: 640px; height: 360px; }
+    #player { width: 640px; height: 360px; }
+    #o { display: none; position: absolute; left: 8px; bottom: 4px; margin: 0; color: #ff0;
+      font: bold 18px monospace; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="box">
+    <div id="player"></div>
+    <pre id="o"></pre>
+  </div>
+  <script type="module" src="./demo.ts"></script>
+</body>
+</html>

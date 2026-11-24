@@ -1,5 +1,6 @@
 import { defineConfig, configDefaults } from 'vitest/config';
 import { resolve } from 'path';
+import { existsSync } from 'fs';
 
 const nativeCorrectnessFiles = ['scripts/net-shaper/startup.loopback.test.ts'];
 const performanceFiles = ['scripts/net-shaper/shaper.performance.test.ts'];
@@ -45,6 +46,15 @@ export default defineConfig({
       '@openmoq/player': resolve(__dirname, 'packages/player/src/index.ts'),
       '@openmoq/browser': resolve(__dirname, 'packages/browser/src/index.ts'),
       '@openmoq/playa': resolve(__dirname, 'packages/playa/src/index.ts'),
+      // fec-with-moq: the FEC decoder for the FEC stage's tests, from a checkout of the fec-with-moq
+      // repository: FEC_DECODER_SRC, otherwise the sibling checkout under the repository's name or
+      // its old one (fecing-with-moq), the first with web/fec-decoder/src. Without one those tests
+      // skip and say so (fec-stage.test.ts); every other suite runs.
+      'fec-decoder': process.env.FEC_DECODER_SRC
+        ?? (['fec-with-moq', 'fecing-with-moq']
+          .map((d) => resolve(__dirname, '..', d, 'web/fec-decoder/src'))
+          .find((p) => existsSync(p))
+          ?? resolve(__dirname, '../fec-with-moq/web/fec-decoder/src')),
     },
   },
   test: {

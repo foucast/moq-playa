@@ -12,6 +12,7 @@ import type { CatalogNamespaceContext } from './track-identity.js';
 import type {
     Catalog, CatalogDelta, CatalogObject, CatalogTrack, Packaging,
     MsfMediaTemplate, MsfInitDataEntry, CmsfContentProtection, CmsfDrmSystem, CmsfUrlRef,
+    MsfParseOptions,
 } from './types.js';
 import { validateMsf02Encoding, validateMsf02Fields, parsePackagingMetadata } from './catalog-msf02.js';
 import { assertFiniteCatalogNumbers } from './catalog-validate.js';
@@ -70,6 +71,7 @@ const VALID_PACKAGING = new Set<string>(['loc', 'mediatimeline', 'eventtimeline'
 export function parseMsfCatalog(
     json: string | Uint8Array,
     catalogNamespace?: CatalogNamespaceContext,
+    options?: MsfParseOptions,
 ): Catalog {
     const text = typeof json === 'string' ? json : new TextDecoder().decode(json);
     const raw: unknown = JSON.parse(text);
@@ -106,9 +108,10 @@ export function parseMsfCatalog(
     if (msfDraft) validateMsf02Encoding(json);
     const legacyMsf00 = typeof obj['version'] === 'number';
 
-    const tracks = (obj['tracks'] as unknown[]).map(
-        (raw, i) => parseTrack(raw, i, catalogNamespace, legacyMsf00, msfDraft),
-    );
+    const tracks = (obj['tracks'] as unknown[])
+        .map((raw, i) => [raw, i] as const)
+        .filter(([raw]) => !skippedPackaging(raw, options))
+        .map(([raw, i]) => parseTrack(raw, i, catalogNamespace, legacyMsf00, msfDraft));
 
     // §5.1.11: Track names must be unique per namespace
     validateTrackUniqueness(tracks);
@@ -291,6 +294,15 @@ export function validateLocmafVersion(track: {
             `Track "${track.name}": locmafVersion MUST NOT be present when packaging is not "locmaf" (LOCMAF §5)`,
         );
     }
+}
+
+/** fec-with-moq: a track whose packaging the caller asked to accept and leave out. */
+function skippedPackaging(raw: unknown, options: MsfParseOptions | undefined): boolean {
+    if (!options?.skipPackaging || typeof raw !== 'object' || raw === null) return false;
+    const packaging = (raw as Record<string, unknown>)['packaging'];
+    const skip = typeof packaging === 'string' && options.skipPackaging.has(packaging);
+    if (skip) options.onSkipped?.(raw as Record<string, unknown>);
+    return skip;
 }
 
 /**

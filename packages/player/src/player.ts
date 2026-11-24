@@ -92,6 +92,7 @@ import type { MediaDiagnosticRuntime, MediaDiagnosticsFactory, MediaStageObserve
 import type { ObjectRoutingContext, ObjectRoutingDiscardReason, ObjectDeliveryAdmission, ObjectDeliveryOptions } from './subscription-manager.js';
 import { liveLocContexts } from './loc-live-context.js';
 import { SubscriptionManager, type TrackPackaging } from './subscription-manager.js';
+import { FecStage, fecInfoFromCatalog } from './fec-stage.js';
 import { extractLargestLocation } from './player-message.js';
 import { WarmStartHead } from './warm-start-head.js';
 
@@ -975,6 +976,12 @@ export class MoqtPlayer {
     return 2_000_000;
   }
   private subscriptionManager: SubscriptionManager | null = null;
+  /** fec-with-moq: the FEC stage of the selected video track (config.fec), if any. */
+  private fecStage: FecStage | null = null;
+  /** fec-with-moq: the catalog's FEC tracks (x-fec-source, x-fec-repair) by name, as raw JSON. */
+  private readonly fecCatalogTracks = new Map<string, Readonly<Record<string, unknown>>>();
+  /** fec-with-moq: plain track name -> the FEC source track subscribed in its place (FEC on). */
+  private readonly fecWire = new Map<string, string>();
 
   /**
    * Sans-I/O playback pipelines — one per media track.
@@ -1764,7 +1771,7 @@ export class MoqtPlayer {
         // subscription (d22 §9.5.1 UPDATE_FAILED); preserve live fallback.
         owner.prefixStandalone = true;
         void owner.connection.fetch((owner.subscription.namespace ?? namespaceFields(this.config.namespace)).map(field => this.enc.encode(field)),
-          this.enc.encode(trackName), { startGroup: start.group, startObject: start.object,
+          this.enc.encode(this.wireTrackName(trackName)), { startGroup: start.group, startObject: start.object,
             endGroup: end.group, endObject: end.object + 1n, groupOrder: 'ascending', onRequestId: register,
           }).then(id => register(BigInt(id))).catch(failed);
         return;
@@ -3906,7 +3913,7 @@ export class MoqtPlayer {
         return;
       }
       const nsBytes = targetNamespace.map(field => this.enc.encode(field));
-      const nameBytes = this.enc.encode(trackName);
+      const nameBytes = this.enc.encode(this.wireTrackName(trackName));
       const currentGroup = this.videoPipeline?.currentGroupId ?? -1n;
       const nextGroup = currentGroup >= 0n ? currentGroup + 1n : undefined;
       // One committed fragment proves only part of its Group. Retrieve that
@@ -4798,7 +4805,7 @@ export class MoqtPlayer {
     }
 
     // Initialize managers
-    this.catalogSlots.catalogManager = new CatalogManager(this.config.namespace);
+    this.catalogSlots.catalogManager = this.withFecCatalog(new CatalogManager(this.config.namespace));
     this.qualityController = new QualityController({
       autoQuality: this.config.autoQuality!,
       startLevel: this.config.startLevel!,
@@ -6195,7 +6202,7 @@ export class MoqtPlayer {
    */
   private async prepareCandidateCatalog(txn: MigrationTxn, conn: MoqtConnection): Promise<CatalogState> {
     const slots = txn.slots!;
-    slots.catalogManager = new CatalogManager(this.config.namespace);
+    slots.catalogManager = this.withFecCatalog(new CatalogManager(this.config.namespace));
     await this.issueCandidateCatalogSubscribe(txn, conn);
     return txn.prep!.catalog;
   }
@@ -7627,7 +7634,8 @@ export class MoqtPlayer {
         else prep.media.set(id, { trackName: name, namespace, mediaType, packaging, alias: null });
         onClaim?.(id);
       };
-      const reqId = await conn.subscribe(namespace.map(field => this.enc.encode(field)), this.enc.encode(name),
+      const reqId = await conn.subscribe(namespace.map(field => this.enc.encode(field)),
+        this.enc.encode(initKey === null ? this.wireTrackName(name) : name),
         { ...options, ...(initKey === null ? { ...this.subscriberPriorityFor(mediaType), ...this.mediaTerminalOptions(conn) } : {}),
           onRequestId: claim } as never);
       if (allocated === null) claim(BigInt(reqId));
@@ -8745,7 +8753,7 @@ export class MoqtPlayer {
     const target = this.uniqueCatalogTrack(trackName);
     const nsFields = trackNamespaceFields(target, this.config.namespace);
     const nsBytes = nsFields.map(field => this.enc.encode(field));
-    const nameBytes = this.enc.encode(trackName);
+    const nameBytes = this.enc.encode(this.wireTrackName(trackName));
 
     const fetchOptions = {
       startGroup: varint(BigInt(options.startGroup)),
@@ -9724,7 +9732,7 @@ export class MoqtPlayer {
     const live = (): boolean => ownedAsCandidate() || ownedAsMain();
     const nsBytes = encodeNamespace(this.config.namespace, this.enc);
     const nameBytes = this.enc.encode(this.config.catalogTrackName);
-    const manager = new CatalogManager(this.config.namespace);
+    const manager = this.withFecCatalog(new CatalogManager(this.config.namespace));
     let pendingAttempt: number | null = null;
 
     const failCandidate = (reason: string): void => {
@@ -11003,6 +11011,8 @@ export class MoqtPlayer {
       }
       this._stats.recordPlayStop();
       this.stopTicking();
+      this.fecStage?.release();
+      this.fecStage = null;
       // Liveness: quiet destroy — cancel any in-flight restart ladder (it must
       // never emit MEDIA_STARVED for an intentional teardown) and disarm.
       this.cancelLivenessRestarts();
@@ -12399,7 +12409,8 @@ export class MoqtPlayer {
         if (this.seekBridgesFor(conn).some(owner => owner.handleDatagram(datagram))) return;
         const alias = BigInt(datagram.trackAlias);
         if (!this.mediaRouteBelongsTo(conn, alias)) return;
-        if (this.subscriptionManager?.getMediaType(alias) === undefined) return;
+        if (this.subscriptionManager?.getMediaType(alias) === undefined
+          && !this.subscriptionManager?.fecRepair.has(alias)) return;
         this.recordVideoPayload(receipt, datagram);
         this.log.debug('Datagram alias=%s group=%s obj=%s', alias, datagram.groupId, datagram.objectId);
 
@@ -14359,6 +14370,76 @@ export class MoqtPlayer {
     }) : null;
   }
 
+  /**
+   * fec-with-moq (config.fec): when the catalog has an `x-fec-source` track for the selected plain
+   * video track (its packagingMetadata names it, `plainTrack=`), subscribe to that source track in
+   * the plain track's place (wireTrackName), divert its Objects to a FEC stage, and subscribe to
+   * its repair tracks on this connection; their datagrams reach the stage only
+   * (SubscriptionManager.fecRepair). The stage's frames take the plain track's stock LOC path. The
+   * plain track itself is never subscribed while FEC is on.
+   */
+  private attachFec(track: CatalogTrack): void {
+    const fec = this.config.fec;
+    const sm = this.subscriptionManager;
+    const conn = this.connection;
+    if (!fec?.enabled || !sm || !conn) return;
+    const info = fecInfoFromCatalog(track.name, this.fecCatalogTracks.values());
+    if (!info) return;
+    this.fecStage?.release();
+    const stage = new FecStage(info, {
+      decoder: fec.decoder,
+      ...(fec.deadlineMs !== undefined ? { deadlineMs: fec.deadlineMs } : {}),
+      deliver: (obj) => { void sm.routeObject(0n, obj, conn.draftVersion, conn, undefined, undefined, true); },
+    });
+    this.fecStage = stage;
+    this.fecWire.set(track.name, info.source);
+    sm.fecSources.set(track.name, (obj) => { if (obj.kind === 'data') stage.pushSource(obj); });
+    stage.onRelease(() => {
+      if (sm.fecSources.get(track.name)) sm.fecSources.delete(track.name);
+      if (this.fecWire.get(track.name) === info.source) this.fecWire.delete(track.name);
+    });
+    const nsBytes = encodeNamespace(this.config.namespace, this.enc);
+    const rungs = info.rungs.slice(0, Math.max(0, Math.min(info.rungs.length, fec.rungs ?? info.rungs.length)));
+    this.log.info('[FEC] stage on "%s" via source "%s": %d-frame blocks, %d per group, rungs %s',
+      track.name, info.source, info.blockObjects, info.blocksPerGroup, rungs.join(',') || 'none');
+    for (const rung of rungs) {
+      conn.subscribeTrack(nsBytes, this.enc.encode(rung), { filter: { type: 'NextGroupStart' } })
+        .then((sub) => {
+          if (stage.released) { void sub.unsubscribe().catch(() => {}); return; }
+          sm.fecRepair.set(sub.trackAlias, (obj) => { if (obj.kind === 'data') stage.pushRepair(rung, obj); });
+          stage.onRelease(() => {
+            sm.fecRepair.delete(sub.trackAlias);
+            void sub.unsubscribe().catch(() => {});
+          });
+        })
+        .catch((err: unknown) => {
+          this.log.warn('[FEC] subscribing to "%s" failed: %s', rung, err instanceof Error ? err.message : String(err));
+        });
+    }
+    fec.onStage?.(stage);
+  }
+
+  /** fec-with-moq: the track name a SUBSCRIBE for media track `name` carries (FEC on: its source). */
+  private wireTrackName(name: string): string {
+    return this.fecWire.get(name) ?? name;
+  }
+
+  /**
+   * fec-with-moq: with FEC on, the catalog parser leaves the `x-fec-source` and `x-fec-repair`
+   * tracks out of the catalog's tracks and hands them here raw. Upstream would keep them (and
+   * leave them out of selection), but drops their packagingMetadata, which holds the FEC
+   * parameters. With FEC off the manager parses exactly as upstream.
+   */
+  private withFecCatalog(manager: CatalogManager): CatalogManager {
+    if (this.config.fec?.enabled) {
+      manager.msfParseOptions = {
+        skipPackaging: new Set(['x-fec-source', 'x-fec-repair']),
+        onSkipped: (t) => { if (typeof t['name'] === 'string') this.fecCatalogTracks.set(t['name'], t); },
+      };
+    }
+    return manager;
+  }
+
   /** Subscribe to selected media tracks in parallel through beforeSubscribe. */
   private async subscribeToMediaTracks(catalog: CatalogState, current: () => boolean = () => true, retainedVideo?: TrackIdentity, recovery = false): Promise<void> {
     const conn = this.connection;
@@ -14436,6 +14517,9 @@ export class MoqtPlayer {
     // ── Subscribe to selected tracks (parallel) ──────────────────
     // §9.5: Multiple SUBSCRIBEs can be in-flight simultaneously.
 
+    // fec-with-moq: route the source track to a FEC stage before its first Object can arrive.
+    if (selected.video && videoPackaging === 'loc') this.attachFec(selected.video);
+
     const tracks: Array<{ name: string; mediaType: 'video' | 'audio'; packaging: TrackPackaging }> = [];
     if (selected.video) tracks.push({ name: selected.video.name, mediaType: 'video', packaging: videoPackaging });
     if (selected.audio) tracks.push({ name: selected.audio.name, mediaType: 'audio', packaging: audioPackaging });
@@ -14457,7 +14541,7 @@ export class MoqtPlayer {
       if (!recovery) this._mediaSubsExpected++;
 
       const nsBytes = nsFields.map(field => this.enc.encode(field));
-      const nameBytes = this.enc.encode(name);
+      const nameBytes = this.enc.encode(this.wireTrackName(name));
       // Live media defaults to NextGroupStart (start at keyframe boundary).
       // Non-live/VOD defaults to AbsoluteStart {0,0} (start from beginning).
       const track = mediaType === 'video' ? selected.video : selected.audio;
@@ -15871,7 +15955,7 @@ export class MoqtPlayer {
     if (this.hooks.beforeSubscribe.run({ trackName, mediaType, namespace: ns }) === null) return;
     if (!live()) return;
     const nsBytes = ns.map(field => this.enc.encode(field));
-    const nameBytes = this.enc.encode(trackName);
+    const nameBytes = this.enc.encode(this.wireTrackName(trackName));
     const filter = defaultMediaSubscriptionFilter(isLive);
 
     // Pre-send ownership (§9.10): a same-tick SUBSCRIBE_OK must find the
