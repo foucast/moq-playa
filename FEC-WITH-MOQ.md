@@ -22,10 +22,22 @@ the three-track catalog below. The older branch `fec-with-moq` (Nov 13) starts f
   or Firefox, plays for a set time and prints one JSON object (the page's record plus a summary).
 - `examples/fec-with-moq/demo.html`: a demo page for watching in a browser (below).
 
+## Build
+
+The FEC stage's decoder comes from the fec-with-moq repository: the examples build imports its
+`web/fec-decoder/src` from a checkout next to this one (or from `FEC_DECODER_SRC`, if set), and stops
+with a message naming both when there is none.
+
+```sh
+git clone --branch fec-with-moq-v2 https://github.com/foucast/moq-playa.git
+git clone --recursive https://github.com/foucast/fec-with-moq.git    # beside moq-playa
+cd moq-playa
+pnpm install --frozen-lockfile && pnpm -r build          # also builds examples/dist/
+```
+
 ## Run it against a relay
 
 ```sh
-pnpm install --frozen-lockfile && pnpm -r build          # also builds examples/dist/
 cd examples/dist && python3 -m http.server 8082 --bind 127.0.0.1 &
 python3 fec-with-moq/playa_play.py https://RELAY:PORT/PATH NAMESPACE \
     --browser chromium --secs 60 --draft 18 [--hash SHA256HEX] [--cb subscribe] [--log info]
@@ -36,8 +48,9 @@ python3 fec-with-moq/playa_play.py https://RELAY:PORT/PATH NAMESPACE \
   `openssl x509 -in cert.pem -outform der | sha256sum`.
 - **`--draft`:** sets the WebTransport `protocols` offer (`moqt-18`). The selected protocol is in
   the output (`summary.protocol`).
-- **`--cb`:** Playa's `catalogBootstrap`. The default `auto` works with an MSF publisher that
-  answers a Joining FETCH for the catalog.
+- **`--cb`:** Playa's `catalogBootstrap`. The default `auto` (SUBSCRIBE plus a Joining FETCH for the
+  catalog) works with the fec-with-moq publisher, which answers that FETCH and also sends the catalog
+  again as a new group every 2 s.
 - **Firefox:** run with WebTransport and its datagrams enabled, and autoplay allowed. The driver sets
   these preferences.
 
@@ -59,7 +72,7 @@ http://localhost:PORT/fec-with-moq/demo.html?url=https://RELAY:PORT/PATH&ns=NAME
   (`draft-18` or `18`), `fec` (1, the default, or 0 for the stock path), `rungs` (default 3),
   `deadline` (ms, default 600), `play` (1, the default: autoplay, muted; 0: click to start),
   `overlay`, `label` (`_` for spaces), `certHash` (hex SHA-256 of a self-signed relay certificate;
-  omit it for a publicly trusted one), `log`. `catalogBootstrap` is `subscribe`.
+  omit it for a publicly trusted one), `log`. `catalogBootstrap` is Playa's default (`auto`).
 - **Overlay** (`overlay=1`): the wall clock, behind-live (the wall clock minus the LOC capture time of
   the frame drawn last), and with FEC on, `FEC blocks seen N  recovered N  abandoned N`, refreshed
   once a second from the FEC stage's own counters.

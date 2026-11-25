@@ -21,7 +21,8 @@
  *   &certHash=<hex>              SHA-256 of a self-signed relay certificate (serverCertificateHashes)
  *   &log=warn                    Playa log level
  *
- * catalogBootstrap is "subscribe" (the publisher answers no Joining FETCH for the catalog).
+ * catalogBootstrap is Playa's default ('auto': SUBSCRIBE plus a Joining FETCH for the catalog), so a
+ * player joining at any time gets the catalog.
  *
  * Behind-live = the wall clock (Date.now()) - the LOC capture timestamp of the frame the renderer
  * drew last (`player.videoPresentation.frameTimestampUs`), as in the headless harness. Unlike the
@@ -71,7 +72,6 @@ function main(): void {
     autoplay,
     muted: true,
     moqtPlayerConfig: {
-      catalogBootstrap: 'subscribe',
       logLevel: (q.get('log') ?? 'warn') as 'none' | 'error' | 'warn' | 'info' | 'debug',
       ...(fecOn ? {
         fec: {
